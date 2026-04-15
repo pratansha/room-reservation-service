@@ -6,18 +6,18 @@ import com.marvel.reservation.dto.PaymentStatusRetrievalRequest;
 import com.marvel.reservation.dto.ReservationRequest;
 import com.marvel.reservation.dto.ReservationResponse;
 import com.marvel.reservation.entity.Reservation;
-import com.marvel.reservation.enums.PaymentMode;
 import com.marvel.reservation.enums.ReservationStatus;
 import com.marvel.reservation.exception.BadRequestException;
 import com.marvel.reservation.exception.PaymentFailedException;
+import com.marvel.reservation.exception.PaymentServiceException;
 import com.marvel.reservation.repository.ReservationRepository;
+import com.marvel.reservation.util.ReservationIdGenerator;
+import feign.RetryableException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
 
-import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.temporal.ChronoUnit;
 import java.util.List;
 
 @Slf4j
@@ -34,55 +34,56 @@ public class ReservationService {
     }
 
     public ReservationResponse confirmReservation(ReservationRequest request) {
+        log.info("Creating reservation | customer={}, room={}, start={}, end={}, paymentMode={}",
+                request.getCustomerName(),
+                request.getRoomNumber(),
+                request.getStartDate(),
+                request.getEndDate(),
+                request.getPaymentMode());
 
-        log.info("Received reservation request for customer: {}", request.getCustomerName());
-
-        // 1. Validate input
-        validateRequest(request);
-
-        // 2. Idempotency check
+        // Idempotency
         if (request.getPaymentReference() != null && repository.existsByPaymentReference(request.getPaymentReference())) {
+            log.warn("Duplicate payment reference detected: {}", request.getPaymentReference());
             throw new BadRequestException("Duplicate payment reference");
         }
 
-        // 3. Room availability check (IMPORTANT BUSINESS LOGIC)
-        boolean isRoomOccupied = repository.existsByRoomNumberAndStatusInAndStartDateLessThanEqualAndEndDateGreaterThanEqual(
-                        request.getRoomNumber(),
-                        List.of(ReservationStatus.CONFIRMED, ReservationStatus.PENDING_PAYMENT),
-                        request.getEndDate(),
-                        request.getStartDate()
-                );
+        // Room availability
+        boolean isOccupied = repository.existsByRoomNumberAndStatusInAndStartDateLessThanEqualAndEndDateGreaterThanEqual(
+                request.getRoomNumber(),
+                List.of(ReservationStatus.CONFIRMED, ReservationStatus.PENDING_PAYMENT),
+                request.getEndDate(),
+                request.getStartDate()
+        );
 
-        if (isRoomOccupied) {
-            throw new BadRequestException("Room is already occupied for the selected dates");
+        if (isOccupied) {
+            log.warn("Room already occupied | room={}, start={}, end={}", request.getRoomNumber(), request.getStartDate(), request.getEndDate());
+            throw new BadRequestException("Room is already occupied for selected dates");
         }
 
-        // 4. Create reservation
+        // Create entity
         Reservation reservation = new Reservation();
         BeanUtils.copyProperties(request, reservation);
+
+        reservation.setId(ReservationIdGenerator.generateId());
         reservation.setCreatedAt(LocalDateTime.now());
 
-        // 5. Payment handling
+        // Payment handling
         switch (request.getPaymentMode()) {
-            case CASH:
+            case CASH -> {
                 reservation.setStatus(ReservationStatus.CONFIRMED);
-                break;
+                log.info("Cash payment → auto confirmed");
+            }
+            case CREDIT_CARD -> handleCreditCardPayment(reservation, request);
 
-            case CREDIT_CARD:
-                handleCreditCardPayment(reservation, request);
-                break;
-
-            case BANK_TRANSFER:
+            case BANK_TRANSFER -> {
                 reservation.setStatus(ReservationStatus.PENDING_PAYMENT);
-                break;
-
-            default:
-                throw new BadRequestException("Invalid payment mode");
+                log.info("Bank transfer → pending payment");
+            }
+            default -> throw new BadRequestException("Invalid payment mode");
         }
 
-        // 6. Save
         Reservation saved = repository.save(reservation);
-        log.info("Reservation created with id: {} and status: {}", saved.getId(), saved.getStatus());
+        log.info("Reservation created successfully | id={}, status={}", saved.getId(), saved.getStatus());
         return new ReservationResponse(saved.getId(), saved.getStatus());
     }
 
@@ -90,58 +91,27 @@ public class ReservationService {
     // Payment Handling
     // =========================
     private void handleCreditCardPayment(Reservation reservation, ReservationRequest request) {
+
+        log.info("Processing credit card payment | reference={}", request.getPaymentReference());
+
+        var paymentRequest = PaymentStatusRetrievalRequest.builder().paymentReference(request.getPaymentReference()).build();
         PaymentStatusResponse response;
         try {
-            var paymentRequest = PaymentStatusRetrievalRequest.builder().paymentReference(request.getPaymentReference()).build();
             response = creditCardClient.getPaymentStatus(paymentRequest);
-        } catch (Exception e) {
-            log.error("Credit card service failed", e);
-            throw new PaymentFailedException("Credit card service unavailable");
+        } catch (RetryableException ex) {
+            log.error("Payment service unreachable", ex);
+            throw new PaymentServiceException("Payment service unavailable");
         }
         if (response == null || response.getStatus() == null) {
-            throw new PaymentFailedException("Invalid response from payment service");
+            throw new PaymentServiceException("Invalid payment response from credit card service");
         }
+
         if ("CONFIRMED".equalsIgnoreCase(response.getStatus())) {
             reservation.setStatus(ReservationStatus.CONFIRMED);
+            log.info("Payment confirmed");
         } else {
+            log.warn("Payment rejected | reference={}", request.getPaymentReference());
             throw new PaymentFailedException("Credit card payment rejected");
-        }
-    }
-
-    // =========================
-    // Validation Layer
-    // =========================
-    private void validateRequest(ReservationRequest request) {
-
-
-        // Payment reference validation
-        if (request.getPaymentMode() != PaymentMode.CASH && (request.getPaymentReference() == null || request.getPaymentReference().isBlank())) {
-            throw new BadRequestException("Payment reference is required");
-        }
-        validateDates(request);
-    }
-
-    private void validateDates(ReservationRequest request) {
-
-        if (request.getStartDate() == null || request.getEndDate() == null) {
-            throw new BadRequestException("Start date and end date are required");
-        }
-
-        if (request.getStartDate().isBefore(LocalDate.now())) {
-            throw new BadRequestException("Start date cannot be in the past");
-        }
-
-        if (request.getEndDate().isBefore(request.getStartDate())) {
-            throw new BadRequestException("End date must be after start date");
-        }
-
-        long days = ChronoUnit.DAYS.between(
-                request.getStartDate(),
-                request.getEndDate()
-        );
-
-        if (days <= 0 || days > 30) {
-            throw new BadRequestException("Reservation must be between 1 and 30 days");
         }
     }
 }

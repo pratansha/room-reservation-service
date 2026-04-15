@@ -23,7 +23,7 @@ public class ReservationScheduler {
         LocalDate today = LocalDate.now();
         for (Reservation r : reservations) {
             if (r.getStatus() == ReservationStatus.CANCELLED) {
-                return; // ignore already cancelled
+                continue; // ignore already cancelled
             }
             if (r.getStartDate().minusDays(2).isBefore(today)) {
                 r.setStatus(ReservationStatus.CANCELLED);

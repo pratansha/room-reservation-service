@@ -6,7 +6,7 @@ import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 
-@FeignClient(name = "credit-card-client", url = "${credit.card.base-url}")
+@FeignClient(name = "credit-card-client", url = "${credit.card.base-url}", configuration = FeignConfig.class)
 public interface CreditCardClient {
     @PostMapping("/payment-status")
     PaymentStatusResponse getPaymentStatus(@RequestBody PaymentStatusRetrievalRequest request);

@@ -17,9 +17,7 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 @Builder
 public class Reservation {
-
     @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
     private String id;
 
     private String customerName;
@@ -36,7 +34,7 @@ public class Reservation {
     private PaymentMode paymentMode;
 
     @Column(unique = true)
-    private String paymentReference;
+    private String paymentReference; // one payment for one reservation.
 
     @Enumerated(EnumType.STRING)
     private ReservationStatus status;
