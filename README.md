@@ -58,9 +58,22 @@ Response:
 ## Kafka Topic
 bank-transfer-payment-update
 
-Example message:
-1401541457 P4145478
+
+## Dependent Service: Credit Card Payment Service
+This service depends on an external microservice: credit-card-payment-service
+
+## Start credit-card-payment-service
+It is required when using:
+Payment Mode = CREDIT_CARD
+
+  Example message:
+  1401541457 P4145478
 
 ## Scheduler
 Runs daily at 1 AM to cancel unpaid reservations.
 
+
+## Future Improvement:
+- Replace mock credit-card service with real payment gateway integration
+- Add service discovery (Eureka)
+- Add API Gateway
