@@ -36,7 +36,7 @@ custom:
     trusted-packages: "*"
 
 server:
-  port: 8080
+  port: 8081
 
 feign:
   client:
@@ -57,3 +57,15 @@ logging:
   level:
     root: INFO
     com.marvel.reservation: DEBUG
+
+
+  #key clock related settings. (8082 port used by Keyclock).
+  spring:
+    security:
+      oauth2:
+        resourceserver:
+          jwt:
+            issuer-uri: http://localhost:8080/realms/demo-realm
+
+
+## Key-clock command need to run : podman run --name keycloak  -p 8080:8080 -e KEYCLOAK_ADMIN=admin -e KEYCLOAK_ADMIN_PASSWORD=admin quay.io/keycloak/keycloak start-dev

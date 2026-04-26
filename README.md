@@ -79,7 +79,7 @@ Runs daily at 1 AM to cancel unpaid reservations.
 - Add API Gateway
 
 
-### Swagger documentation access : http://localhost:8080/swagger-ui/index.html
+### Swagger documentation access : http://localhost:8081/swagger-ui/index.html
 
 
 ##  Sample API Requests
